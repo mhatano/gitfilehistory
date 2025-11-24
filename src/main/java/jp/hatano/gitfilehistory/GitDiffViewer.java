@@ -2,22 +2,18 @@ package jp.hatano.gitfilehistory;
 
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
-import org.eclipse.jgit.diff.DiffEntry;
-import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
-import org.eclipse.jgit.treewalk.CanonicalTreeParser;
-
 import javax.swing.*;
-import javax.swing.event.ChangeEvent;
 import javax.swing.border.EmptyBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.text.*;
 import java.awt.*;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -90,12 +86,13 @@ public class GitDiffViewer extends JFrame {
         commitList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         commitList.setCellRenderer(new CommitCellRenderer());
 
-        leftDiffPane = createDiffTextPane();
-        rightDiffPane = createDiffTextPane();
-
         // 左右のペインを同期スクロールさせる
-        JScrollPane leftScrollPane = new JScrollPane(leftDiffPane);
-        JScrollPane rightScrollPane = new JScrollPane(rightDiffPane);
+        JScrollPane leftScrollPane = createDiffScrollPane();
+        JScrollPane rightScrollPane = createDiffScrollPane();
+        // JScrollPaneからJTextPaneを取得
+        leftDiffPane = (JTextPane) leftScrollPane.getViewport().getView();
+        rightDiffPane = (JTextPane) rightScrollPane.getViewport().getView();
+
         
         // 1つのモデルを共有することで、完全に同期したスクロールを実現する
         BoundedRangeModel sharedModel = new DefaultBoundedRangeModel();
@@ -130,12 +127,19 @@ public class GitDiffViewer extends JFrame {
         });
     }
 
-    private JTextPane createDiffTextPane() {
+    private JScrollPane createDiffScrollPane() { // Will be used for left pane
         JTextPane textPane = new JTextPane();
         textPane.setEditable(false);
         textPane.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
         textPane.setMargin(new Insets(5, 5, 5, 5));
-        return textPane;
+        // The LineNumberView will be created with a reference to the text pane
+        // and will track line numbers.
+        // We will pass the initial line number list later.
+        // For now, we just create it.
+
+        JScrollPane scrollPane = new JScrollPane(textPane);
+        scrollPane.setRowHeaderView(new LineNumberView(textPane));
+        return scrollPane;
     }
 
     private void browseForDirectory(JTextField targetField) {
@@ -249,11 +253,13 @@ public class GitDiffViewer extends JFrame {
     private String getFileContent(ObjectId commitId, String filePath) throws IOException {
         try (RevWalk revWalk = new RevWalk(repository)) {
             RevCommit commit = revWalk.parseCommit(commitId);
-            org.eclipse.jgit.treewalk.TreeWalk treeWalk = org.eclipse.jgit.treewalk.TreeWalk.forPath(repository, filePath, commit.getTree());
+            RevTree tree = commit.getTree();
+
+            org.eclipse.jgit.treewalk.TreeWalk treeWalk = org.eclipse.jgit.treewalk.TreeWalk.forPath(repository, filePath, tree);
+
             if (treeWalk != null) {
                 ObjectId objectId = treeWalk.getObjectId(0);
-                ObjectReader loader = repository.newObjectReader();
-                byte[] bytes = loader.open(objectId).getBytes();
+                byte[] bytes = repository.open(objectId).getBytes();
                 return new String(bytes, StandardCharsets.UTF_8);
             }
         }
@@ -274,6 +280,10 @@ public class GitDiffViewer extends JFrame {
         SimpleAttributeSet modifiedStyle = new SimpleAttributeSet();
         StyleConstants.setBackground(modifiedStyle, MODIFIED_COLOR);
 
+        List<Integer> leftLineNumbers = new ArrayList<>();
+        List<Integer> rightLineNumbers = new ArrayList<>();
+        int leftLine = 1, rightLine = 1;
+
         List<String> oldLines = Arrays.asList(oldText.split("\n"));
         List<String> newLines = Arrays.asList(newText.split("\n"));
 
@@ -284,41 +294,61 @@ public class GitDiffViewer extends JFrame {
             switch (diff.type) {
                 case EQUAL:
                     leftDoc.insertString(leftDoc.getLength(), text, plainStyle);
+                    for (int i = 0; i < diff.lines.size(); i++) leftLineNumbers.add(leftLine++);
                     rightDoc.insertString(rightDoc.getLength(), text, plainStyle);
+                    for (int i = 0; i < diff.lines.size(); i++) rightLineNumbers.add(rightLine++);
                     break;
                 case DELETE:
                     leftDoc.insertString(leftDoc.getLength(), text, deleteStyle);
                     for (int i = 0; i < diff.lines.size(); i++) {
+                        leftLineNumbers.add(leftLine++);
                         rightDoc.insertString(rightDoc.getLength(), "\n", plainStyle);
+                        rightLineNumbers.add(null); // Placeholder for blank line
                     }
                     break;
                 case INSERT:
                     for (int i = 0; i < diff.lines.size(); i++) {
                         leftDoc.insertString(leftDoc.getLength(), "\n", plainStyle);
+                        leftLineNumbers.add(null); // Placeholder for blank line
                     }
                     rightDoc.insertString(rightDoc.getLength(), text, addStyle);
+                    for (int i = 0; i < diff.lines.size(); i++) rightLineNumbers.add(rightLine++);
                     break;
                 case CHANGE:
-                    String[] changeParts = text.split(DiffUtils.CHANGE_SEPARATOR, 2);
-                    String oldPart = changeParts[0];
-                    String newPart = changeParts[1];
-                    leftDoc.insertString(leftDoc.getLength(), oldPart, modifiedStyle);
-                    rightDoc.insertString(rightDoc.getLength(), newPart, modifiedStyle);
+                    int oldLinesCount = diff.oldLines.size();
+                    int newLinesCount = diff.newLines.size();
+                    int maxLines = Math.max(oldLinesCount, newLinesCount);
+
+                    for (int i = 0; i < maxLines; i++) {
+                        String oldLine = i < oldLinesCount ? diff.oldLines.get(i) + "\n" : "\n";
+                        String newLine = i < newLinesCount ? diff.newLines.get(i) + "\n" : "\n";
+                        leftDoc.insertString(leftDoc.getLength(), oldLine, i < oldLinesCount ? modifiedStyle : plainStyle);
+                        rightDoc.insertString(rightDoc.getLength(), newLine, i < newLinesCount ? modifiedStyle : plainStyle);
+                        leftLineNumbers.add(i < oldLinesCount ? leftLine++ : null);
+                        rightLineNumbers.add(i < newLinesCount ? rightLine++ : null);
+                    }
                     break;
             }
         }
 
+        // Update line number views
+        JScrollPane leftScrollPane = (JScrollPane) SwingUtilities.getAncestorOfClass(JScrollPane.class, leftDiffPane);
+        ((LineNumberView) leftScrollPane.getRowHeader().getView()).setLineNumbers(leftLineNumbers);
+        JScrollPane rightScrollPane = (JScrollPane) SwingUtilities.getAncestorOfClass(JScrollPane.class, rightDiffPane);
+        ((LineNumberView) rightScrollPane.getRowHeader().getView()).setLineNumbers(rightLineNumbers);
+
         // スクロール範囲を再計算して、両方のペインが最後までスクロールできるようにする
         // SwingUtilities.invokeLaterを使用して、UIの更新が完了した後に実行する
         SwingUtilities.invokeLater(() -> {
-            JScrollBar leftScrollBar = ((JScrollPane) leftDiffPane.getParent().getParent()).getVerticalScrollBar();
-            JScrollBar rightScrollBar = ((JScrollPane) rightDiffPane.getParent().getParent()).getVerticalScrollBar();
+            JScrollPane tmpLeftScrollPane = (JScrollPane) leftDiffPane.getParent().getParent();
+            JScrollPane tmpRightScrollPane = (JScrollPane) rightDiffPane.getParent().getParent();
 
-            int leftMax = leftScrollBar.getMaximum() - leftScrollBar.getVisibleAmount();
-            int rightMax = rightScrollBar.getMaximum() - rightScrollBar.getVisibleAmount();
-            int maxScroll = Math.max(leftMax, rightMax);
-            
-            leftScrollBar.getModel().setRangeProperties(0, leftScrollBar.getVisibleAmount(), 0, maxScroll + leftScrollBar.getVisibleAmount(), false);
+            BoundedRangeModel model = tmpLeftScrollPane.getVerticalScrollBar().getModel();
+            int extent = model.getExtent();
+            int leftHeight = leftDiffPane.getPreferredSize().height;
+            int rightHeight = rightDiffPane.getPreferredSize().height;
+            int max = Math.max(leftHeight, rightHeight);
+            model.setRangeProperties(model.getValue(), extent, model.getMinimum(), max, false);
         });
 
         leftDiffPane.setCaretPosition(0);
@@ -408,10 +438,20 @@ public class GitDiffViewer extends JFrame {
         static class Diff {
             final DiffType type;
             final List<String> lines;
+            final List<String> oldLines; // For CHANGE type
+            final List<String> newLines; // For CHANGE type
 
             Diff(DiffType type, List<String> lines) {
                 this.type = type;
                 this.lines = lines;
+                this.oldLines = null;
+                this.newLines = null;
+            }
+            Diff(DiffType type, List<String> newLines, List<String> oldLines) {
+                this.type = type;
+                this.lines = newLines; // For INSERT, this is the main content
+                this.oldLines = oldLines;
+                this.newLines = newLines;
             }
         }
 
@@ -422,23 +462,34 @@ public class GitDiffViewer extends JFrame {
             int i = oldLines.size();
             int j = newLines.size();
 
-            while (i > 0 || j > 0) {
-                if (i > 0 && j > 0 && oldLines.get(i - 1).equals(newLines.get(j - 1))) {
+            while (i > 0 || j > 0) { // Backtrack from the end
+                if (i > 0 && j > 0 && oldLines.get(i - 1).equals(newLines.get(j - 1))) { // Equal lines
                     diffs.add(0, new Diff(DiffType.EQUAL, List.of(oldLines.get(i - 1))));
-                    i--;
-                    j--;
-                } else if (j > 0 && (i == 0 || lcs[i][j - 1] >= lcs[i - 1][j])) {
-                    if (i > 0 && (j == 0 || lcs[i-1][j] >= lcs[i][j-1])) { // Change
-                         diffs.add(0, new Diff(DiffType.CHANGE, List.of(oldLines.get(i - 1) + "\n" + CHANGE_SEPARATOR + newLines.get(j - 1) + "\n")));
-                         i--;
-                         j--;
-                    } else { // Insert
-                        diffs.add(0, new Diff(DiffType.INSERT, List.of(newLines.get(j - 1))));
-                        j--;
+                    i--; j--;
+                } else { // Difference found
+                    int endI = i, endJ = j;
+                    // Find the next common line to define the change block
+                    while (i > 0 || j > 0) {
+                        if (i > 0 && j > 0 && oldLines.get(i - 1).equals(newLines.get(j - 1))) {
+                            break; // Found the start of the difference block
+                        }
+                        if (j > 0 && (i == 0 || lcs[i][j - 1] >= lcs[i - 1][j])) {
+                            j--;
+                        } else if (i > 0 && (j == 0 || lcs[i - 1][j] > lcs[i][j - 1])) {
+                            i--;
+                        }
                     }
-                } else if (i > 0 && (j == 0 || lcs[i - 1][j] > lcs[i][j - 1])) {
-                    diffs.add(0, new Diff(DiffType.DELETE, List.of(oldLines.get(i - 1))));
-                    i--;
+
+                    List<String> deleted = new ArrayList<>(oldLines.subList(i, endI));
+                    List<String> inserted = new ArrayList<>(newLines.subList(j, endJ));
+
+                    if (!deleted.isEmpty() && !inserted.isEmpty()) {
+                        diffs.add(0, new Diff(DiffType.CHANGE, inserted, deleted));
+                    } else if (!deleted.isEmpty()) {
+                        diffs.add(0, new Diff(DiffType.DELETE, deleted));
+                    } else if (!inserted.isEmpty()) {
+                        diffs.add(0, new Diff(DiffType.INSERT, inserted));
+                    }
                 }
             }
             return merge(diffs);
@@ -465,7 +516,7 @@ public class GitDiffViewer extends JFrame {
             List<Diff> merged = new ArrayList<>();
             Diff lastDiff = null;
             for (Diff diff : diffs) {
-                if (lastDiff != null && lastDiff.type == diff.type && diff.type != DiffType.CHANGE) {
+                if (lastDiff != null && lastDiff.type == diff.type && lastDiff.type != DiffType.CHANGE) {
                     List<String> newLines = new ArrayList<>(lastDiff.lines);
                     newLines.addAll(diff.lines);
                     lastDiff = new Diff(lastDiff.type, newLines);
@@ -480,6 +531,90 @@ public class GitDiffViewer extends JFrame {
                 merged.add(lastDiff);
             }
             return merged;
+        }
+    }
+
+    /**
+     * A component that displays line numbers for a JTextPane.
+     */
+    private static class LineNumberView extends JComponent {
+        private static final int MARGIN = 5;
+        private final JTextPane textPane;
+        private final FontMetrics fontMetrics;
+        private List<Integer> lineNumbers;
+
+        public LineNumberView(JTextPane textPane) {
+            this.textPane = textPane;
+            Font font = textPane.getFont();
+            this.fontMetrics = textPane.getFontMetrics(font);
+            setFont(font);
+            this.lineNumbers = new ArrayList<>();
+            setBackground(new Color(240, 240, 240));
+            setForeground(Color.GRAY);
+
+            textPane.getDocument().addDocumentListener(new DocumentListener() {
+                @Override public void insertUpdate(DocumentEvent e) { update(); }
+                @Override public void removeUpdate(DocumentEvent e) { update(); }
+                @Override public void changedUpdate(DocumentEvent e) { update(); }
+            });
+
+            textPane.addComponentListener(new java.awt.event.ComponentAdapter() {
+                @Override
+                public void componentResized(java.awt.event.ComponentEvent e) {
+                    update();
+                }
+            });
+        }
+
+        public void setLineNumbers(List<Integer> lineNumbers) {
+            this.lineNumbers = lineNumbers;
+            update();
+        }
+
+        private void update() {
+            // Update the preferred size and repaint
+            getParent().revalidate();
+            repaint();
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            int maxNum = lineNumbers.stream()
+                .filter(n -> n != null)
+                .mapToInt(n -> n)
+                .max().orElse(1);
+            String maxLineNum = String.valueOf(maxNum);
+            int width = fontMetrics.stringWidth(maxLineNum) + 2 * MARGIN;
+            return new Dimension(width, textPane.getPreferredSize().height);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            g.setColor(getBackground());
+            g.fillRect(0, 0, getWidth(), getHeight());
+            g.setColor(getForeground());
+
+            Rectangle clip = g.getClipBounds();
+            int startOffset = textPane.viewToModel2D(new Point(0, clip.y));
+            int endOffset = textPane.viewToModel2D(new Point(0, clip.y + clip.height));
+
+            Element root = textPane.getDocument().getDefaultRootElement();
+
+            for (int i = root.getElementIndex(startOffset); i <= root.getElementIndex(endOffset); i++) {
+                if (i < 0 || i >= lineNumbers.size()) continue;
+                
+                Integer lineNumberInt = lineNumbers.get(i);
+                if (lineNumberInt == null) continue; // Don't draw number for blank lines
+
+                try {
+                    String lineNumber = String.valueOf(lineNumberInt);
+                    Rectangle r = textPane.modelToView2D(root.getElement(i).getStartOffset()).getBounds();
+                    int y = r.y + r.height - fontMetrics.getDescent();
+                    int x = getWidth() - fontMetrics.stringWidth(lineNumber) - MARGIN;
+                    g.drawString(lineNumber, x, y);
+                } catch (BadLocationException e) { /* ignore */ }
+            }
         }
     }
 }
