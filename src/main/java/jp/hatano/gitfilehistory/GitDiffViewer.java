@@ -3,6 +3,7 @@ package jp.hatano.gitfilehistory;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevTree;
@@ -21,8 +22,11 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets; 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
-import java.util.prefs.Preferences;
+import java.util.Map;
+import java.util.prefs.Preferences; 
 
 public class GitDiffViewer extends JFrame {
 
@@ -240,11 +244,27 @@ public class GitDiffViewer extends JFrame {
             repository = new FileRepositoryBuilder().setGitDir(repoDir).readEnvironment().findGitDir().build();
             git = new Git(repository);
 
+            // Create a map from commit ID to branch names for efficiency
+            Map<ObjectId, List<String>> commitToBranchesMap = new HashMap<>();
+            List<Ref> branches = git.branchList().setListMode(org.eclipse.jgit.api.ListBranchCommand.ListMode.ALL).call();
+            try (RevWalk revWalk = new RevWalk(repository)) {
+                for (Ref branch : branches) {
+                    RevCommit commit = revWalk.parseCommit(branch.getObjectId());
+                    revWalk.markStart(commit);
+                    for (RevCommit currentCommit : revWalk) {
+                        commitToBranchesMap.computeIfAbsent(currentCommit.getId(), k -> new ArrayList<>())
+                            .add(Repository.shortenRefName(branch.getName()));
+                    }
+                    revWalk.reset();
+                }
+            }
+
             // ブランチをまたがってファイルのコミット履歴を取得
             Iterable<RevCommit> logs = git.log().addPath(filePath).call();
             List<CommitInfo> commits = new ArrayList<>();
             for (RevCommit rev : logs) {
-                commits.add(new CommitInfo(rev));
+                List<String> branchNames = commitToBranchesMap.getOrDefault(rev.getId(), Collections.emptyList());
+                commits.add(new CommitInfo(rev, branchNames));
             }
             
             if (commits.isEmpty()) {

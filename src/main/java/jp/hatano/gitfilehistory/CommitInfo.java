@@ -2,6 +2,8 @@ package jp.hatano.gitfilehistory;
 
 import org.eclipse.jgit.revwalk.RevCommit;
 
+import java.util.List;
+
 import java.text.SimpleDateFormat;
 
 /**
@@ -13,13 +15,15 @@ public class CommitInfo {
     final String author;
     final String date;
     final String message;
+    final List<String> branchNames;
 
-    public CommitInfo(RevCommit commit) {
+    public CommitInfo(RevCommit commit, List<String> branchNames) {
         this.commit = commit;
         this.shortHash = commit.getId().abbreviate(7).name();
         this.author = commit.getAuthorIdent().getName();
         this.date = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(commit.getAuthorIdent().getWhen());
         this.message = commit.getShortMessage();
+        this.branchNames = branchNames;
     }
 
     public RevCommit getCommit() {
