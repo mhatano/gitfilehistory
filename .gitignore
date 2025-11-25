@@ -6,3 +6,17 @@ target/classes/jp/hatano/gitfilehistory/GitDiffViewer$DiffUtils$Diff.class
 target/classes/jp/hatano/gitfilehistory/GitDiffViewer$DiffUtils$DiffType.class
 target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst
 target/test-classes/jp/hatano/gitfilehistory/AppTest.class
+target/surefire-reports/TEST-jp.hatano.gitfilehistory.AppTest.xml
+target/surefire-reports/jp.hatano.gitfilehistory.AppTest.txt
+target/maven-status/maven-compiler-plugin/testCompile/default-testCompile/inputFiles.lst
+target/maven-status/maven-compiler-plugin/testCompile/default-testCompile/createdFiles.lst
+target/maven-archiver/pom.properties
+target/classes/jp/hatano/gitfilehistory/GitDiffViewer$LineWrapper.class
+target/classes/jp/hatano/gitfilehistory/GitDiffViewer$LineNumberView$2.class
+target/classes/jp/hatano/gitfilehistory/GitDiffViewer$LineNumberView$1.class
+target/classes/jp/hatano/gitfilehistory/GitDiffViewer$LineNumberView.class
+target/classes/jp/hatano/gitfilehistory/GitDiffViewer$2.class
+target/classes/jp/hatano/gitfilehistory/GitDiffViewer$1.class
+target/original-gitfilehistory-1.0-SNAPSHOT.jar
+.vscode/settings.json
+dependency-reduced-pom.xml
