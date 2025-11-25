@@ -20,3 +20,4 @@ target/classes/jp/hatano/gitfilehistory/GitDiffViewer$1.class
 target/original-gitfilehistory-1.0-SNAPSHOT.jar
 .vscode/settings.json
 dependency-reduced-pom.xml
+target/maven-status/maven-compiler-plugin/compile/default-compile/inputFiles.lst
