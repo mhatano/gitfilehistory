@@ -21,3 +21,12 @@ target/original-gitfilehistory-1.0-SNAPSHOT.jar
 .vscode/settings.json
 dependency-reduced-pom.xml
 target/maven-status/maven-compiler-plugin/compile/default-compile/inputFiles.lst
+target/classes/jp/hatano/gitfilehistory/CommitCellRenderer.class
+target/classes/jp/hatano/gitfilehistory/CommitInfo.class
+target/classes/jp/hatano/gitfilehistory/DiffUtils.class
+target/classes/jp/hatano/gitfilehistory/DiffUtils$Diff.class
+target/classes/jp/hatano/gitfilehistory/DiffUtils$DiffType.class
+target/classes/jp/hatano/gitfilehistory/LineNumberView.class
+target/classes/jp/hatano/gitfilehistory/LineNumberView$1.class
+target/classes/jp/hatano/gitfilehistory/LineNumberView$2.class
+target/classes/jp/hatano/gitfilehistory/LineWrapper.class
