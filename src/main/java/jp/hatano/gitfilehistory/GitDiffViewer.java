@@ -214,6 +214,15 @@ public class GitDiffViewer extends JFrame {
                 java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, null);
             }
         });
+        JMenuItem copyMessageItem = new JMenuItem("Copy Commit Message");
+        copyMessageItem.addActionListener(e -> {
+            CommitInfo selected = commitList.getSelectedValue();
+            if (selected != null) {
+                String message = selected.message;
+                java.awt.datatransfer.StringSelection selection = new java.awt.datatransfer.StringSelection(message);
+                java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, null);
+            }
+        });
         JMenuItem copyJsonItem = new JMenuItem("Copy as JSON");
         copyJsonItem.addActionListener(e -> {
             CommitInfo selected = commitList.getSelectedValue();
@@ -223,6 +232,7 @@ public class GitDiffViewer extends JFrame {
                 json.append("  \"hash\": \"").append(selected.getShortHash()).append("\",\n");
                 json.append("  \"date\": \"").append(selected.date).append("\",\n");
                 json.append("  \"author\": \"").append(selected.author).append("\",\n");
+                json.append("  \"message\": \"").append(selected.message).append("\",\n");
                 json.append("  \"branches\": [");
                 json.append(selected.branchNames != null ? String.join(", ", selected.branchNames.stream().map(s -> "\"" + s + "\"").collect(java.util.stream.Collectors.toList())) : "");
                 json.append("]\n");
@@ -250,6 +260,7 @@ public class GitDiffViewer extends JFrame {
         popupMenu.add(copyBranchNamesItem);
         popupMenu.add(copyCommitDateItem);
         popupMenu.add(copyAuthorNameItem);
+        popupMenu.add(copyMessageItem);
         popupMenu.add(copyJsonItem);
 
         // 左右のペインを同期スクロールさせる
@@ -1075,29 +1086,10 @@ public class GitDiffViewer extends JFrame {
 
     // --- mainメソッド ---
     public static void main(String[] args) {
-        // 日付を含むログファイル名を生成
-        String dateStr = new java.text.SimpleDateFormat("yyyy-MM-dd").format(new java.util.Date());
-
-        // ユーザーのホームディレクトリを取得してログファイルのパスを設定
-        String userHome = System.getProperty("user.home");
-        File logFile = new File(userHome, "gitfilehistory_" + dateStr + ".log");
-
-        // ログ出力をファイルに変更し、コンソールへの出力を抑制
-        System.setProperty("org.slf4j.simpleLogger.logFile", logFile.getAbsolutePath());
-
-        // デフォルトのログレベルをWARNに設定。--debugフラグがあればDEBUGにする。
-        String logLevel = "WARN";
-        for (String arg : args) {
-            if ("--debug".equalsIgnoreCase(arg) || "--verbose".equalsIgnoreCase(arg)) {
-                logLevel = "DEBUG";
-                break;
-            }
-        }
-        System.setProperty("LOG_LEVEL", logLevel);
-        System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", logLevel);
+        // コンソールへのログ出力を抑制
+        System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", "off");
 
         logger = LoggerFactory.getLogger(GitDiffViewer.class);
-        logger.info("Application starting with log level: {}", logLevel);
 
         SwingUtilities.invokeLater(() -> {
             try {
