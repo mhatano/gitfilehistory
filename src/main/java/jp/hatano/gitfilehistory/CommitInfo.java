@@ -26,6 +26,19 @@ public class CommitInfo {
         this.branchNames = branchNames;
     }
 
+    public CommitInfo(String message, String author, String date) {
+        this.commit = null;
+        this.shortHash = "[WIP]";
+        this.author = author;
+        this.date = date;
+        this.message = message;
+        this.branchNames = java.util.Collections.emptyList();
+    }
+
+    public boolean isUncommitted() {
+        return commit == null;
+    }
+
     public RevCommit getCommit() {
         return commit;
     }

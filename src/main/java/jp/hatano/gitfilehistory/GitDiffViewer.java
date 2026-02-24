@@ -1,7 +1,6 @@
 package jp.hatano.gitfilehistory;
 
 import org.eclipse.jgit.api.Git;
-import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
@@ -10,7 +9,9 @@ import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import javax.swing.*;
-import javax.swing.border.EmptyBorder; 
+import javax.swing.border.EmptyBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.text.*;
 import java.awt.*;
 import java.awt.event.WindowAdapter;
@@ -19,14 +20,18 @@ import java.awt.event.ComponentEvent;
 import java.awt.event.WindowEvent;
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets; 
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.prefs.Preferences; 
+import java.util.prefs.Preferences;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+import java.util.concurrent.ExecutionException;
 
 public class GitDiffViewer extends JFrame {
 
@@ -37,6 +42,7 @@ public class GitDiffViewer extends JFrame {
     private final JTextPane leftDiffPane;
     private final JTextPane rightDiffPane;
     private final JLabel statusBar;
+    private final JComboBox<String> encodingComboBox;
     private final JSplitPane mainSplitPane;
 
     private Git git;
@@ -47,6 +53,31 @@ public class GitDiffViewer extends JFrame {
     private static final Color DELETE_COLOR = new Color(255, 220, 220);
     private static final Color MODIFIED_COLOR = new Color(220, 220, 255);
 
+    // 検索機能用UI
+    private JTextField searchField;
+    private JCheckBox caseCheckBox;
+    private JCheckBox regexCheckBox;
+
+    // ハイライト関連
+    private final Highlighter.HighlightPainter searchHighlightPainter = new DefaultHighlighter.DefaultHighlightPainter(new Color(255, 255, 0, 128));
+    private final Highlighter.HighlightPainter currentHighlightPainter = new DefaultHighlighter.DefaultHighlightPainter(Color.ORANGE);
+    private final List<HighlightInfo> highlights = new ArrayList<>();
+    private int currentHighlightIndex = -1;
+
+    // ハイライトされた箇所の情報を保持するインナークラス
+    private static class HighlightInfo {
+        final JTextPane pane;
+        final int start;
+        final int end;
+        Object tag; // Highlighter.addHighlightから返されるタグを保持
+
+        HighlightInfo(JTextPane pane, int start, int end) {
+            this.pane = pane;
+            this.start = start;
+            this.end = end;
+        }
+    }
+
     // Preferences keys
     private static final String PREF_REPO_PATH = "repoPath";
     private static final String PREF_FILE_PATH = "filePath";
@@ -55,7 +86,9 @@ public class GitDiffViewer extends JFrame {
     private static final String PREF_WIDTH = "width";
     private static final String PREF_HEIGHT = "height";
     private static final String PREF_DIVIDER_LOCATION = "dividerLocation";
+    private static final String PREF_ENCODING = "encoding";
     private final Preferences prefs;
+    private final JButton loadCommitsButton;
 
     public GitDiffViewer() {
         setTitle("Git File Diff Viewer");
@@ -63,7 +96,7 @@ public class GitDiffViewer extends JFrame {
 
         // Initialize preferences
         prefs = Preferences.userNodeForPackage(GitDiffViewer.class);
-        
+
         // --- UIコンポーネントの初期化 ---
 
         // 上部パネル (入力フィールドとボタン)
@@ -75,28 +108,40 @@ public class GitDiffViewer extends JFrame {
         gbc.insets = new Insets(2, 2, 2, 2);
         gbc.fill = GridBagConstraints.HORIZONTAL;
 
-        gbc.gridx = 0; gbc.gridy = 0;
+        gbc.gridx = 0;
+        gbc.gridy = 0;
         pathPanel.add(new JLabel("Repo Path:"), gbc);
         repoPathField = new JTextField(40);
-        gbc.gridx = 1; gbc.weightx = 1.0;
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
         pathPanel.add(repoPathField, gbc);
         JButton browseRepoButton = new JButton("...");
-        gbc.gridx = 2; gbc.weightx = 0;
+        gbc.gridx = 2;
+        gbc.weightx = 0;
         pathPanel.add(browseRepoButton, gbc);
 
-        gbc.gridx = 0; gbc.gridy = 1;
+        gbc.gridx = 0;
+        gbc.gridy = 1;
         pathPanel.add(new JLabel("File Path:"), gbc);
         filePathField = new JTextField(40);
-        gbc.gridx = 1; gbc.weightx = 1.0;
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
         pathPanel.add(filePathField, gbc);
         JButton browseFileButton = new JButton("...");
-        gbc.gridx = 2; gbc.weightx = 0;
+        gbc.gridx = 2;
+        gbc.weightx = 0;
         pathPanel.add(browseFileButton, gbc);
 
-        JButton loadCommitsButton = new JButton("Load Commits");
-        
+        loadCommitsButton = new JButton("Load Commits");
+
+        JPanel rightTopPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 0));
+        encodingComboBox = new JComboBox<>(new String[] { "UTF-8", "Shift_JIS", "EUC-JP" });
+        rightTopPanel.add(new JLabel("Encoding:"));
+        rightTopPanel.add(encodingComboBox);
+        rightTopPanel.add(loadCommitsButton);
+
         topPanel.add(pathPanel, BorderLayout.CENTER);
-        topPanel.add(loadCommitsButton, BorderLayout.EAST);
+        topPanel.add(rightTopPanel, BorderLayout.EAST);
 
         // 中央パネル (コミットリストと差分表示)
         commitListModel = new DefaultListModel<>();
@@ -111,7 +156,6 @@ public class GitDiffViewer extends JFrame {
         leftDiffPane = (JTextPane) leftScrollPane.getViewport().getView();
         rightDiffPane = (JTextPane) rightScrollPane.getViewport().getView();
 
-        
         // 1つのモデルを共有することで、完全に同期したスクロールを実現する
         BoundedRangeModel sharedModel = new DefaultBoundedRangeModel();
         leftScrollPane.getVerticalScrollBar().setModel(sharedModel);
@@ -132,12 +176,23 @@ public class GitDiffViewer extends JFrame {
         contentPane.setLayout(new BorderLayout());
         contentPane.add(topPanel, BorderLayout.NORTH);
         contentPane.add(mainSplitPane, BorderLayout.CENTER);
-        contentPane.add(statusBar, BorderLayout.SOUTH);
+
+        // 検索パネルとステータスバーをまとめる下部パネル
+        JPanel southPanel = new JPanel(new BorderLayout());
+        southPanel.add(createSearchPanel(), BorderLayout.NORTH);
+        southPanel.add(statusBar, BorderLayout.SOUTH);
+        contentPane.add(southPanel, BorderLayout.SOUTH);
 
         // --- イベントリスナーの設定 ---
         browseRepoButton.addActionListener(e -> browseForDirectory(repoPathField));
         browseFileButton.addActionListener(e -> browseForFile(filePathField));
         loadCommitsButton.addActionListener(e -> loadCommits());
+        encodingComboBox.addActionListener(e -> {
+            if (commitList.getSelectedIndices().length == 2
+                    || (!commitListModel.isEmpty() && commitsLoadedTriggerReDiff())) {
+                showDiff();
+            }
+        });
         commitList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 showDiff();
@@ -162,6 +217,7 @@ public class GitDiffViewer extends JFrame {
                 prefs.putInt(PREF_WIDTH, getWidth());
                 prefs.putInt(PREF_HEIGHT, getHeight());
                 prefs.putInt(PREF_DIVIDER_LOCATION, mainSplitPane.getDividerLocation());
+                prefs.put(PREF_ENCODING, (String) encodingComboBox.getSelectedItem());
             }
         });
 
@@ -174,6 +230,45 @@ public class GitDiffViewer extends JFrame {
             setLocationRelativeTo(null);
         }
         mainSplitPane.setDividerLocation(prefs.getInt(PREF_DIVIDER_LOCATION, 300));
+        encodingComboBox.setSelectedItem(prefs.get(PREF_ENCODING, "UTF-8"));
+    }
+
+    private boolean commitsLoadedTriggerReDiff() {
+        return commitList.getSelectedIndices().length == 2;
+    }
+
+    private JPanel createSearchPanel() {
+        JPanel searchPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 2));
+        searchPanel.setBorder(new EmptyBorder(2, 2, 2, 2));
+        searchPanel.add(new JLabel("Search:"));
+        searchField = new JTextField(25);
+        caseCheckBox = new JCheckBox("Ignore Case", true);
+        regexCheckBox = new JCheckBox("Regex");
+        JButton prevButton = new JButton("< Prev");
+        JButton nextButton = new JButton("Next >");
+
+        searchPanel.add(searchField);
+        searchPanel.add(caseCheckBox);
+        searchPanel.add(regexCheckBox);
+        searchPanel.add(prevButton);
+        searchPanel.add(nextButton);
+
+        // イベントリスナー
+        DocumentListener updateListener = new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent e) { updateHighlights(); }
+            @Override public void removeUpdate(DocumentEvent e) { updateHighlights(); }
+            @Override public void changedUpdate(DocumentEvent e) { updateHighlights(); }
+        };
+
+        searchField.getDocument().addDocumentListener(updateListener);
+        caseCheckBox.addActionListener(e -> updateHighlights());
+        regexCheckBox.addActionListener(e -> updateHighlights());
+
+        nextButton.addActionListener(e -> navigateHighlights(true));
+        prevButton.addActionListener(e -> navigateHighlights(false));
+        searchField.addActionListener(e -> navigateHighlights(true)); // Enterで次へ
+
+        return searchPanel;
     }
 
     private JScrollPane createDiffScrollPane() { // Will be used for left pane
@@ -226,61 +321,118 @@ public class GitDiffViewer extends JFrame {
         String filePath = filePathField.getText();
 
         if (repoPath.isEmpty() || filePath.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Repository path and file path must be specified.", "Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Repository path and file path must be specified.", "Error",
+                    JOptionPane.ERROR_MESSAGE);
             return;
         }
 
         commitListModel.clear();
+        clearHighlights(); // ハイライトをクリア
+        if (searchField != null) searchField.setText(""); // 検索フィールドをクリア
         leftDiffPane.setText("");
         rightDiffPane.setText("");
         statusBar.setText("Loading commits...");
 
         try {
-            File repoDir = new File(repoPath, ".git");
+            final File repoDir = new File(repoPath, ".git");
             if (!repoDir.exists()) {
                 throw new IOException("'.git' directory not found. Please select the root of the repository.");
             }
-            
-            repository = new FileRepositoryBuilder().setGitDir(repoDir).readEnvironment().findGitDir().build();
-            git = new Git(repository);
+        } catch (IOException e) {
+            handleException("Error loading commits", e);
+            return;
+        }
 
-            // Create a map from commit ID to branch names for efficiency
-            Map<ObjectId, List<String>> commitToBranchesMap = new HashMap<>();
-            List<Ref> branches = git.branchList().setListMode(org.eclipse.jgit.api.ListBranchCommand.ListMode.ALL).call();
-            try (RevWalk revWalk = new RevWalk(repository)) {
-                for (Ref branch : branches) {
-                    RevCommit commit = revWalk.parseCommit(branch.getObjectId());
-                    revWalk.markStart(commit);
-                    for (RevCommit currentCommit : revWalk) {
-                        commitToBranchesMap.computeIfAbsent(currentCommit.getId(), k -> new ArrayList<>())
-                            .add(Repository.shortenRefName(branch.getName()));
+        loadCommitsButton.setEnabled(false);
+        statusBar.setText("Loading commits...");
+
+        SwingWorker<List<CommitInfo>, Void> worker = new SwingWorker<>() {
+            @Override
+            protected List<CommitInfo> doInBackground() throws Exception {
+                File repoDir = new File(repoPath, ".git");
+                repository = new FileRepositoryBuilder().setGitDir(repoDir).readEnvironment().findGitDir().build();
+                git = new Git(repository);
+
+                // Create a map from commit ID to branch names for efficiency (Local branches
+                // only)
+                Map<ObjectId, List<String>> commitToBranchesMap = new HashMap<>();
+                List<Ref> branches = git.branchList().call(); // ローカルブランチのみを取得
+                try (RevWalk revWalk = new RevWalk(repository)) {
+                    for (Ref branch : branches) {
+                        RevCommit commit = revWalk.parseCommit(branch.getObjectId());
+                        revWalk.markStart(commit);
+                        for (RevCommit currentCommit : revWalk) {
+                            commitToBranchesMap.computeIfAbsent(currentCommit.getId(), k -> new ArrayList<>())
+                                    .add(Repository.shortenRefName(branch.getName()));
+                        }
+                        revWalk.reset();
                     }
-                    revWalk.reset();
+                }
+
+                // ブランチをまたがってファイルのコミット履歴を取得
+                org.eclipse.jgit.api.LogCommand logCmd = git.log().addPath(filePath);
+                for (Ref branch : branches) {
+                    logCmd.add(branch.getObjectId()); // 各ローカルブランチをログ取得の起点に追加
+                }
+                Iterable<RevCommit> logs = logCmd.call();
+
+                List<CommitInfo> commits = new ArrayList<>();
+                for (RevCommit rev : logs) {
+                    List<String> branchNames = commitToBranchesMap.getOrDefault(rev.getId(), Collections.emptyList());
+                    commits.add(new CommitInfo(rev, branchNames));
+                }
+
+                // 時系列順（新しい順）にソートして表示
+                commits.sort((c1, c2) -> Integer.compare(c2.getCommit().getCommitTime(), c1.getCommit().getCommitTime()));
+
+                if (!commits.isEmpty()) {
+                    // ファイルシステム上の未コミットの変更があるかチェック
+                    try {
+                        String latestCommitContent = getFileContent(commits.get(0).getCommit().getId(), filePath);
+                        File localFile = new File(repoPath, filePath);
+                        if (localFile.exists()) {
+                            String charsetName = (String) encodingComboBox.getSelectedItem();
+                            Charset charset = Charset.forName(charsetName != null ? charsetName : "UTF-8");
+                            String localContent = new String(java.nio.file.Files.readAllBytes(localFile.toPath()),
+                                    charset);
+                            if (!localContent.equals(latestCommitContent)) {
+                                // 未コミットの変更がある場合、一番上に追加
+                                String nowStr = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+                                        .format(new java.util.Date());
+                                CommitInfo uncommitted = new CommitInfo("Uncommitted Changes", "Local Workspace", nowStr);
+                                commits.add(0, uncommitted);
+                            }
+                        }
+                    } catch (Exception e) {
+                        System.err.println("Failed to check uncommitted changes: " + e.getMessage());
+                    }
+                }
+                return commits;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    List<CommitInfo> commits = get();
+                    if (commits.isEmpty()) {
+                        statusBar.setText("No commits found for this file.");
+                    } else {
+                        commits.forEach(commitListModel::addElement);
+                        statusBar.setText(commits.size() + " commits loaded.");
+                    }
+                } catch (InterruptedException | ExecutionException e) {
+                    handleException("Error loading commits", (Exception) e.getCause());
+                } finally {
+                    loadCommitsButton.setEnabled(true);
                 }
             }
-
-            // ブランチをまたがってファイルのコミット履歴を取得
-            Iterable<RevCommit> logs = git.log().addPath(filePath).call();
-            List<CommitInfo> commits = new ArrayList<>();
-            for (RevCommit rev : logs) {
-                List<String> branchNames = commitToBranchesMap.getOrDefault(rev.getId(), Collections.emptyList());
-                commits.add(new CommitInfo(rev, branchNames));
-            }
-            
-            if (commits.isEmpty()) {
-                statusBar.setText("No commits found for this file.");
-            } else {
-                commits.forEach(commitListModel::addElement);
-                statusBar.setText(commits.size() + " commits loaded.");
-            }
-
-        } catch (IOException | GitAPIException e) {
-            handleException("Error loading commits", e);
-        }
+        };
+        worker.execute();
     }
 
     private void showDiff() {
         List<CommitInfo> selectedCommits = commitList.getSelectedValuesList();
+        clearHighlights(); // 新しいdiffを表示する前にハイライトをクリア
         if (selectedCommits.size() != 2) {
             leftDiffPane.setText("");
             rightDiffPane.setText("");
@@ -288,24 +440,36 @@ public class GitDiffViewer extends JFrame {
         }
 
         // コミットを時系列順に並べる (古い方が first)
-        CommitInfo first = selectedCommits.get(0).getCommit().getCommitTime() < selectedCommits.get(1).getCommit().getCommitTime() ? selectedCommits.get(0) : selectedCommits.get(1);
-        CommitInfo second = first == selectedCommits.get(0) ? selectedCommits.get(1) : selectedCommits.get(0);
+        CommitInfo c1 = selectedCommits.get(0);
+        CommitInfo c2 = selectedCommits.get(1);
+
+        long time1 = c1.isUncommitted() ? Long.MAX_VALUE : c1.getCommit().getCommitTime();
+        long time2 = c2.isUncommitted() ? Long.MAX_VALUE : c2.getCommit().getCommitTime();
+
+        CommitInfo first, second;
+        if (time1 < time2) {
+            first = c1;
+            second = c2;
+        } else {
+            first = c2;
+            second = c1;
+        }
 
         statusBar.setText("Generating diff between " + first.getShortHash() + " and " + second.getShortHash());
         leftDiffPane.setText("");
         rightDiffPane.setText("");
         leftDiffPane.getStyledDocument().putProperty("IgnoreCharset", Boolean.TRUE);
-        rightDiffPane.getStyledDocument().putProperty("IgnoreCharset", Boolean.TRUE);
 
         try {
+            String repoPath = repoPathField.getText();
             String filePath = filePathField.getText();
-            String oldContent = getFileContent(first.getCommit().getId(), filePath);
-            String newContent = getFileContent(second.getCommit().getId(), filePath);
+            String oldContent = getFileContent(first, repoPath, filePath);
+            String newContent = getFileContent(second, repoPath, filePath);
 
             if (oldContent.equals(newContent)) {
-                 statusBar.setText("No difference found for the file in selected commits.");
-                 leftDiffPane.setText(oldContent);
-                 rightDiffPane.setText(newContent);
+                statusBar.setText("No difference found for the file in selected commits.");
+                leftDiffPane.setText(oldContent);
+                rightDiffPane.setText(newContent);
                 return;
             }
             displaySideBySideDiff(oldContent, newContent);
@@ -315,18 +479,34 @@ public class GitDiffViewer extends JFrame {
             handleException("Error generating diff", e);
         }
     }
-    
+
+    private String getFileContent(CommitInfo info, String repoPath, String filePath) throws IOException {
+        if (info.isUncommitted()) {
+            File localFile = new File(repoPath, filePath);
+            if (localFile.exists()) {
+                String charsetName = (String) encodingComboBox.getSelectedItem();
+                Charset charset = Charset.forName(charsetName != null ? charsetName : "UTF-8");
+                return new String(java.nio.file.Files.readAllBytes(localFile.toPath()), charset);
+            }
+            return "";
+        }
+        return getFileContent(info.getCommit().getId(), filePath);
+    }
+
     private String getFileContent(ObjectId commitId, String filePath) throws IOException {
         try (RevWalk revWalk = new RevWalk(repository)) {
             RevCommit commit = revWalk.parseCommit(commitId);
             RevTree tree = commit.getTree();
 
-            org.eclipse.jgit.treewalk.TreeWalk treeWalk = org.eclipse.jgit.treewalk.TreeWalk.forPath(repository, filePath, tree);
+            org.eclipse.jgit.treewalk.TreeWalk treeWalk = org.eclipse.jgit.treewalk.TreeWalk.forPath(repository,
+                    filePath, tree);
 
             if (treeWalk != null) {
                 ObjectId objectId = treeWalk.getObjectId(0);
                 byte[] bytes = repository.open(objectId).getBytes();
-                return new String(bytes, StandardCharsets.UTF_8);
+                String charsetName = (String) encodingComboBox.getSelectedItem();
+                Charset charset = Charset.forName(charsetName != null ? charsetName : "UTF-8");
+                return new String(bytes, charset);
             }
         }
         return ""; // ファイルが存在しない場合
@@ -362,17 +542,20 @@ public class GitDiffViewer extends JFrame {
             switch (diff.type) {
                 case EQUAL:
                     for (int i = 0; i < diff.lines.size(); i++) {
-                        appendLines(leftWrapper, rightWrapper, leftDoc, rightDoc, diff.lines.get(i), diff.lines.get(i), plainStyle, plainStyle, leftLineNumbers, rightLineNumbers, leftLine++, rightLine++);
+                        appendLines(leftWrapper, rightWrapper, leftDoc, rightDoc, diff.lines.get(i), diff.lines.get(i),
+                                plainStyle, plainStyle, leftLineNumbers, rightLineNumbers, leftLine++, rightLine++);
                     }
                     break;
                 case DELETE:
                     for (int i = 0; i < diff.lines.size(); i++) {
-                        appendLines(leftWrapper, rightWrapper, leftDoc, rightDoc, diff.lines.get(i), "", deleteStyle, plainStyle, leftLineNumbers, rightLineNumbers, leftLine++, null);
+                        appendLines(leftWrapper, rightWrapper, leftDoc, rightDoc, diff.lines.get(i), "", deleteStyle,
+                                plainStyle, leftLineNumbers, rightLineNumbers, leftLine++, null);
                     }
                     break;
                 case INSERT:
                     for (int i = 0; i < diff.lines.size(); i++) {
-                        appendLines(leftWrapper, rightWrapper, leftDoc, rightDoc, "", diff.lines.get(i), plainStyle, addStyle, leftLineNumbers, rightLineNumbers, null, rightLine++);
+                        appendLines(leftWrapper, rightWrapper, leftDoc, rightDoc, "", diff.lines.get(i), plainStyle,
+                                addStyle, leftLineNumbers, rightLineNumbers, null, rightLine++);
                     }
                     break;
                 case CHANGE:
@@ -381,7 +564,8 @@ public class GitDiffViewer extends JFrame {
                         String newLine = i < diff.newLines.size() ? diff.newLines.get(i) : "";
                         Integer oldLineNum = i < diff.oldLines.size() ? leftLine++ : null;
                         Integer newLineNum = i < diff.newLines.size() ? rightLine++ : null;
-                        appendLines(leftWrapper, rightWrapper, leftDoc, rightDoc, oldLine, newLine, modifiedStyle, modifiedStyle, leftLineNumbers, rightLineNumbers, oldLineNum, newLineNum);
+                        appendLines(leftWrapper, rightWrapper, leftDoc, rightDoc, oldLine, newLine, modifiedStyle,
+                                modifiedStyle, leftLineNumbers, rightLineNumbers, oldLineNum, newLineNum);
                     }
                     break;
             }
@@ -422,11 +606,12 @@ public class GitDiffViewer extends JFrame {
         rightDiffPane.setCaretPosition(0);
     }
 
-    private void appendLines(LineWrapper leftWrapper, LineWrapper rightWrapper, StyledDocument leftDoc, StyledDocument rightDoc,
-                             String oldLine, String newLine,
-                             AttributeSet oldStyle, AttributeSet newStyle,
-                             List<Integer> leftLineNumbers, List<Integer> rightLineNumbers,
-                             Integer oldLineNum, Integer newLineNum) throws BadLocationException {
+    private void appendLines(LineWrapper leftWrapper, LineWrapper rightWrapper, StyledDocument leftDoc,
+            StyledDocument rightDoc,
+            String oldLine, String newLine,
+            AttributeSet oldStyle, AttributeSet newStyle,
+            List<Integer> leftLineNumbers, List<Integer> rightLineNumbers,
+            Integer oldLineNum, Integer newLineNum) throws BadLocationException {
 
         List<String> wrappedOld = leftWrapper.wrap(oldLine);
         List<String> wrappedNew = rightWrapper.wrap(newLine);
@@ -449,6 +634,120 @@ public class GitDiffViewer extends JFrame {
         e.printStackTrace();
         statusBar.setText("Error: " + e.getMessage());
         JOptionPane.showMessageDialog(this, message + ":\n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+    }
+
+    private void clearHighlights() {
+        if (leftDiffPane != null) leftDiffPane.getHighlighter().removeAllHighlights();
+        if (rightDiffPane != null) rightDiffPane.getHighlighter().removeAllHighlights();
+        highlights.clear();
+        currentHighlightIndex = -1;
+    }
+
+    private void updateHighlights() {
+        // 既存のハイライトをクリア
+        clearHighlights();
+
+        String searchText = searchField.getText();
+        if (searchText == null || searchText.isEmpty()) {
+            statusBar.setText("Ready");
+            return;
+        }
+
+        try {
+            addHighlightsInPane(leftDiffPane, searchText);
+            addHighlightsInPane(rightDiffPane, searchText);
+        } catch (PatternSyntaxException e) {
+            statusBar.setText("Invalid Regex: " + e.getMessage());
+            return;
+        }
+
+        if (!highlights.isEmpty()) {
+            currentHighlightIndex = 0;
+            navigateToCurrentHighlight(false); // just highlight the first one
+        } else {
+            statusBar.setText("Text not found: " + searchText);
+        }
+    }
+
+    private void addHighlightsInPane(JTextPane pane, String searchText) throws PatternSyntaxException {
+        try {
+            Document doc = pane.getDocument();
+            String content = doc.getText(0, doc.getLength());
+
+            Pattern pattern;
+            if (regexCheckBox.isSelected()) {
+                int flags = 0;
+                if (caseCheckBox.isSelected()) {
+                    flags |= Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
+                }
+                pattern = Pattern.compile(searchText, flags);
+            } else {
+                int flags = caseCheckBox.isSelected() ? Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE : 0;
+                pattern = Pattern.compile(Pattern.quote(searchText), flags);
+            }
+
+            Matcher matcher = pattern.matcher(content);
+            while (matcher.find()) {
+                HighlightInfo hi = new HighlightInfo(pane, matcher.start(), matcher.end());
+                hi.tag = pane.getHighlighter().addHighlight(hi.start, hi.end, searchHighlightPainter);
+                highlights.add(hi);
+            }
+        } catch (BadLocationException e) {
+            // Should not happen
+            e.printStackTrace();
+        }
+    }
+
+    private void navigateHighlights(boolean forward) {
+        if (highlights.isEmpty()) {
+            return;
+        }
+
+        // 現在のハイライトを通常色に戻す
+        if (currentHighlightIndex != -1) {
+            HighlightInfo oldHi = highlights.get(currentHighlightIndex);
+            oldHi.pane.getHighlighter().removeHighlight(oldHi.tag);
+            try {
+                oldHi.tag = oldHi.pane.getHighlighter().addHighlight(oldHi.start, oldHi.end, searchHighlightPainter);
+            } catch (BadLocationException e) { /* ignore */ }
+        }
+
+        if (forward) {
+            currentHighlightIndex = (currentHighlightIndex + 1) % highlights.size();
+        } else {
+            currentHighlightIndex = (currentHighlightIndex - 1 + highlights.size()) % highlights.size();
+        }
+
+        navigateToCurrentHighlight(true);
+    }
+
+    private void navigateToCurrentHighlight(boolean scroll) {
+        if (currentHighlightIndex < 0 || currentHighlightIndex >= highlights.size()) {
+            return;
+        }
+
+        HighlightInfo hi = highlights.get(currentHighlightIndex);
+
+        // 新しい現在のハイライトを強調表示
+        hi.pane.getHighlighter().removeHighlight(hi.tag);
+        try {
+            hi.tag = hi.pane.getHighlighter().addHighlight(hi.start, hi.end, currentHighlightPainter);
+        } catch (BadLocationException e) { /* ignore */ }
+
+        if (scroll) {
+            // その位置にスクロール
+            try {
+                Rectangle viewRect = hi.pane.modelToView(hi.start);
+                if (viewRect != null) {
+                    hi.pane.scrollRectToVisible(viewRect);
+                }
+                hi.pane.setCaretPosition(hi.start);
+            } catch (BadLocationException e) {
+                // ignore
+            }
+        }
+
+        statusBar.setText("Match " + (currentHighlightIndex + 1) + " of " + highlights.size());
     }
 
     // --- mainメソッド ---
