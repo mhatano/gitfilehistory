@@ -1093,8 +1093,12 @@ public class GitDiffViewer extends JFrame {
                 break;
             }
         }
+        // set log level for logback configuration (logback.xml reads ${LOG_LEVEL}).
         System.setProperty("LOG_LEVEL", logLevel);
-        System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", logLevel);
+        // `logback.xml` must be placed on the classpath (e.g. src/main/resources) so
+        // logback can initialise. the file-only appender there prevents any output
+        // to stdout/stderr.  previous version attempted to configure the simple
+        // logger, which isn't on the classpath and would not affect logback anyway.
 
         logger = LoggerFactory.getLogger(GitDiffViewer.class);
         logger.info("Application starting with log level: {}", logLevel);
