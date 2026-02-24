@@ -580,7 +580,9 @@ public class GitDiffViewer extends JFrame {
             this.cachedSecondCommit = second;
             this.cachedOldContent = oldContent;
             this.cachedNewContent = newContent;
-            this.cachedDiffs = DiffUtils.diff(Arrays.asList(oldContent.split("\n")), Arrays.asList(newContent.split("\n")));
+            List<String> oldLines = oldContent.isEmpty() ? Collections.emptyList() : Arrays.asList(oldContent.split("\\r?\\n"));
+            List<String> newLines = newContent.isEmpty() ? Collections.emptyList() : Arrays.asList(newContent.split("\\r?\\n"));
+            this.cachedDiffs = DiffUtils.diff(oldLines, newLines);
 
             // Now display it using the new redisplay method
             redisplayDiff();
@@ -942,8 +944,8 @@ public class GitDiffViewer extends JFrame {
 
         html.append("<table>");
 
-        List<String> oldLines = Arrays.asList(oldText.split("\n"));
-        List<String> newLines = Arrays.asList(newText.split("\n"));
+        List<String> oldLines = oldText.isEmpty() ? Collections.emptyList() : Arrays.asList(oldText.split("\\r?\\n"));
+        List<String> newLines = newText.isEmpty() ? Collections.emptyList() : Arrays.asList(newText.split("\\r?\\n"));
         List<DiffUtils.Diff> diffs = DiffUtils.diff(oldLines, newLines);
 
         int leftLineNum = 1;
@@ -1073,6 +1075,16 @@ public class GitDiffViewer extends JFrame {
 
     // --- mainメソッド ---
     public static void main(String[] args) {
+        // 日付を含むログファイル名を生成
+        String dateStr = new java.text.SimpleDateFormat("yyyy-MM-dd").format(new java.util.Date());
+
+        // ユーザーのホームディレクトリを取得してログファイルのパスを設定
+        String userHome = System.getProperty("user.home");
+        File logFile = new File(userHome, "gitfilehistory_" + dateStr + ".log");
+
+        // ログ出力をファイルに変更し、コンソールへの出力を抑制
+        System.setProperty("org.slf4j.simpleLogger.logFile", logFile.getAbsolutePath());
+
         // デフォルトのログレベルをWARNに設定。--debugフラグがあればDEBUGにする。
         String logLevel = "WARN";
         for (String arg : args) {
@@ -1082,6 +1094,7 @@ public class GitDiffViewer extends JFrame {
             }
         }
         System.setProperty("LOG_LEVEL", logLevel);
+        System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", logLevel);
 
         logger = LoggerFactory.getLogger(GitDiffViewer.class);
         logger.info("Application starting with log level: {}", logLevel);
