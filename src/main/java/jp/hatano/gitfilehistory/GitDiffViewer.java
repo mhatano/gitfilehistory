@@ -2,12 +2,20 @@ package jp.hatano.gitfilehistory;
 
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.lib.ObjectReader;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+import org.eclipse.jgit.treewalk.AbstractTreeIterator;
+import org.eclipse.jgit.treewalk.CanonicalTreeParser;
+import org.eclipse.jgit.treewalk.FileTreeIterator;
+import org.eclipse.jgit.treewalk.filter.PathFilter;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
@@ -18,8 +26,12 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.WindowEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -34,6 +46,8 @@ import java.util.regex.PatternSyntaxException;
 import java.util.concurrent.ExecutionException;
 
 public class GitDiffViewer extends JFrame {
+
+    private static Logger logger;
 
     private final JTextField repoPathField;
     private final JTextField filePathField;
@@ -90,6 +104,13 @@ public class GitDiffViewer extends JFrame {
     private final Preferences prefs;
     private final JButton loadCommitsButton;
 
+    // 差分結果のキャッシュ
+    private List<DiffUtils.Diff> cachedDiffs;
+    private String cachedOldContent;
+    private String cachedNewContent;
+    private CommitInfo cachedFirstCommit;
+    private CommitInfo cachedSecondCommit;
+
     public GitDiffViewer() {
         setTitle("Git File Diff Viewer");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -135,9 +156,16 @@ public class GitDiffViewer extends JFrame {
         loadCommitsButton = new JButton("Load Commits");
 
         JPanel rightTopPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 0));
+        JButton exportHtmlButton = new JButton("Export HTML");
+        exportHtmlButton.addActionListener(e -> exportHtml());
+        JButton exportPatchButton = new JButton("Export Patch");
+        exportPatchButton.addActionListener(e -> exportPatch());
+
         encodingComboBox = new JComboBox<>(new String[] { "UTF-8", "Shift_JIS", "EUC-JP" });
         rightTopPanel.add(new JLabel("Encoding:"));
         rightTopPanel.add(encodingComboBox);
+        rightTopPanel.add(exportHtmlButton);
+        rightTopPanel.add(exportPatchButton);
         rightTopPanel.add(loadCommitsButton);
 
         topPanel.add(pathPanel, BorderLayout.CENTER);
@@ -148,6 +176,81 @@ public class GitDiffViewer extends JFrame {
         commitList = new JList<>(commitListModel);
         commitList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         commitList.setCellRenderer(new CommitCellRenderer());
+
+        JPopupMenu popupMenu = new JPopupMenu();
+        JMenuItem copyHashItem = new JMenuItem("Copy Commit Hash");
+        copyHashItem.addActionListener(e -> {
+            CommitInfo selected = commitList.getSelectedValue();
+            if (selected != null && !selected.isUncommitted()) {
+                String hash = selected.getCommit().getId().name();
+                java.awt.datatransfer.StringSelection selection = new java.awt.datatransfer.StringSelection(hash);
+                java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, null);
+            }
+        });
+        JMenuItem copyBranchNamesItem = new JMenuItem("Copy Branch Name(s)");
+        copyBranchNamesItem.addActionListener(e -> {
+            CommitInfo selected = commitList.getSelectedValue();
+            if (selected != null && !selected.isUncommitted() && selected.branchNames != null && !selected.branchNames.isEmpty()) {
+                String branchNames = String.join(", ", selected.branchNames);
+                java.awt.datatransfer.StringSelection selection = new java.awt.datatransfer.StringSelection(branchNames);
+                java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, null);
+            }
+        });
+        JMenuItem copyCommitDateItem = new JMenuItem("Copy Commit Date");
+        copyCommitDateItem.addActionListener(e -> {
+            CommitInfo selected = commitList.getSelectedValue();
+            if (selected != null && !selected.isUncommitted()) {
+                String date = selected.date;
+                java.awt.datatransfer.StringSelection selection = new java.awt.datatransfer.StringSelection(date);
+                java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, null);
+            }
+        });
+        JMenuItem copyAuthorNameItem = new JMenuItem("Copy Author Name");
+        copyAuthorNameItem.addActionListener(e -> {
+            CommitInfo selected = commitList.getSelectedValue();
+            if (selected != null) { // Uncommitted changes also have an author (Local Workspace)
+                String author = selected.author;
+                java.awt.datatransfer.StringSelection selection = new java.awt.datatransfer.StringSelection(author);
+                java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, null);
+            }
+        });
+        JMenuItem copyJsonItem = new JMenuItem("Copy as JSON");
+        copyJsonItem.addActionListener(e -> {
+            CommitInfo selected = commitList.getSelectedValue();
+            if (selected != null) {
+                StringBuilder json = new StringBuilder();
+                json.append("{\n");
+                json.append("  \"hash\": \"").append(selected.getShortHash()).append("\",\n");
+                json.append("  \"date\": \"").append(selected.date).append("\",\n");
+                json.append("  \"author\": \"").append(selected.author).append("\",\n");
+                json.append("  \"branches\": [");
+                json.append(selected.branchNames != null ? String.join(", ", selected.branchNames.stream().map(s -> "\"" + s + "\"").collect(java.util.stream.Collectors.toList())) : "");
+                json.append("]\n");
+                json.append("}");
+                java.awt.datatransfer.StringSelection selection = new java.awt.datatransfer.StringSelection(json.toString());
+                java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, null);
+            }
+        });
+        popupMenu.add(copyHashItem);
+
+        commitList.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                if (SwingUtilities.isRightMouseButton(e)) {
+                    int index = commitList.locationToIndex(e.getPoint());
+                    if (index != -1 && commitList.getCellBounds(index, index).contains(e.getPoint())) {
+                        if (!commitList.isSelectedIndex(index)) {
+                            commitList.setSelectedIndex(index);
+                        }
+                        popupMenu.show(commitList, e.getX(), e.getY());
+                    }
+                }
+            }
+        });
+        popupMenu.add(copyBranchNamesItem);
+        popupMenu.add(copyCommitDateItem);
+        popupMenu.add(copyAuthorNameItem);
+        popupMenu.add(copyJsonItem);
 
         // 左右のペインを同期スクロールさせる
         JScrollPane leftScrollPane = createDiffScrollPane();
@@ -188,21 +291,20 @@ public class GitDiffViewer extends JFrame {
         browseFileButton.addActionListener(e -> browseForFile(filePathField));
         loadCommitsButton.addActionListener(e -> loadCommits());
         encodingComboBox.addActionListener(e -> {
-            if (commitList.getSelectedIndices().length == 2
-                    || (!commitListModel.isEmpty() && commitsLoadedTriggerReDiff())) {
-                showDiff();
+            if (commitList.getSelectedIndices().length == 2) {
+                calculateAndShowDiff(); // Recalculate with new encoding
             }
         });
         commitList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
-                showDiff();
+                calculateAndShowDiff(); // New selection, so recalculate
             }
         });
 
         addComponentListener(new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent e) {
-                showDiff(); // Recalculate wrapping on resize
+                redisplayDiff(); // Just re-render with cached diff
             }
         });
 
@@ -231,10 +333,6 @@ public class GitDiffViewer extends JFrame {
         }
         mainSplitPane.setDividerLocation(prefs.getInt(PREF_DIVIDER_LOCATION, 300));
         encodingComboBox.setSelectedItem(prefs.get(PREF_ENCODING, "UTF-8"));
-    }
-
-    private boolean commitsLoadedTriggerReDiff() {
-        return commitList.getSelectedIndices().length == 2;
     }
 
     private JPanel createSearchPanel() {
@@ -327,6 +425,13 @@ public class GitDiffViewer extends JFrame {
         }
 
         commitListModel.clear();
+        // Also clear the diff cache
+        cachedDiffs = null;
+        cachedOldContent = null;
+        cachedNewContent = null;
+        cachedFirstCommit = null;
+        cachedSecondCommit = null;
+
         clearHighlights(); // ハイライトをクリア
         if (searchField != null) searchField.setText(""); // 検索フィールドをクリア
         leftDiffPane.setText("");
@@ -404,7 +509,7 @@ public class GitDiffViewer extends JFrame {
                             }
                         }
                     } catch (Exception e) {
-                        System.err.println("Failed to check uncommitted changes: " + e.getMessage());
+                        logger.warn("Failed to check uncommitted changes.", e);
                     }
                 }
                 return commits;
@@ -430,12 +535,19 @@ public class GitDiffViewer extends JFrame {
         worker.execute();
     }
 
-    private void showDiff() {
+    private void calculateAndShowDiff() {
         List<CommitInfo> selectedCommits = commitList.getSelectedValuesList();
         clearHighlights(); // 新しいdiffを表示する前にハイライトをクリア
+
         if (selectedCommits.size() != 2) {
+            // Clear panes and cache
             leftDiffPane.setText("");
             rightDiffPane.setText("");
+            cachedDiffs = null;
+            cachedOldContent = null;
+            cachedNewContent = null;
+            cachedFirstCommit = null;
+            cachedSecondCommit = null;
             return;
         }
 
@@ -456,9 +568,6 @@ public class GitDiffViewer extends JFrame {
         }
 
         statusBar.setText("Generating diff between " + first.getShortHash() + " and " + second.getShortHash());
-        leftDiffPane.setText("");
-        rightDiffPane.setText("");
-        leftDiffPane.getStyledDocument().putProperty("IgnoreCharset", Boolean.TRUE);
 
         try {
             String repoPath = repoPathField.getText();
@@ -466,17 +575,40 @@ public class GitDiffViewer extends JFrame {
             String oldContent = getFileContent(first, repoPath, filePath);
             String newContent = getFileContent(second, repoPath, filePath);
 
-            if (oldContent.equals(newContent)) {
-                statusBar.setText("No difference found for the file in selected commits.");
-                leftDiffPane.setText(oldContent);
-                rightDiffPane.setText(newContent);
-                return;
-            }
-            displaySideBySideDiff(oldContent, newContent);
-            statusBar.setText("Diff loaded successfully.");
+            // Cache the results
+            this.cachedFirstCommit = first;
+            this.cachedSecondCommit = second;
+            this.cachedOldContent = oldContent;
+            this.cachedNewContent = newContent;
+            this.cachedDiffs = DiffUtils.diff(Arrays.asList(oldContent.split("\n")), Arrays.asList(newContent.split("\n")));
+
+            // Now display it using the new redisplay method
+            redisplayDiff();
 
         } catch (Exception e) {
             handleException("Error generating diff", e);
+            // Clear cache on error
+            cachedDiffs = null;
+        }
+    }
+
+    private void redisplayDiff() {
+        if (cachedDiffs == null) {
+            // This can happen on resize before a selection is made.
+            // If no selection, ensure panes are empty.
+            if (commitList.getSelectedIndices().length != 2) {
+                leftDiffPane.setText("");
+                rightDiffPane.setText("");
+            }
+            return;
+        }
+
+        statusBar.setText("Rendering diff...");
+        try {
+            displaySideBySideDiff(cachedOldContent, cachedNewContent, cachedDiffs);
+            statusBar.setText(cachedOldContent.equals(cachedNewContent) ? "No difference found." : "Diff loaded successfully.");
+        } catch (Exception e) {
+            handleException("Error displaying diff", e);
         }
     }
 
@@ -512,7 +644,7 @@ public class GitDiffViewer extends JFrame {
         return ""; // ファイルが存在しない場合
     }
 
-    private void displaySideBySideDiff(String oldText, String newText) throws BadLocationException {
+    private void displaySideBySideDiff(String oldText, String newText, List<DiffUtils.Diff> diffs) throws BadLocationException {
         StyledDocument leftDoc = leftDiffPane.getStyledDocument();
         StyledDocument rightDoc = rightDiffPane.getStyledDocument();
         leftDoc.remove(0, leftDoc.getLength());
@@ -530,13 +662,8 @@ public class GitDiffViewer extends JFrame {
         List<Integer> rightLineNumbers = new ArrayList<>();
         int leftLine = 1, rightLine = 1;
 
-        List<String> oldLines = Arrays.asList(oldText.split("\n"));
-        List<String> newLines = Arrays.asList(newText.split("\n"));
-
         LineWrapper leftWrapper = new LineWrapper(leftDiffPane);
         LineWrapper rightWrapper = new LineWrapper(rightDiffPane);
-
-        List<DiffUtils.Diff> diffs = DiffUtils.diff(oldLines, newLines);
 
         for (DiffUtils.Diff diff : diffs) {
             switch (diff.type) {
@@ -631,7 +758,7 @@ public class GitDiffViewer extends JFrame {
     }
 
     private void handleException(String message, Exception e) {
-        e.printStackTrace();
+        logger.error(message, e);
         statusBar.setText("Error: " + e.getMessage());
         JOptionPane.showMessageDialog(this, message + ":\n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
     }
@@ -693,8 +820,7 @@ public class GitDiffViewer extends JFrame {
                 highlights.add(hi);
             }
         } catch (BadLocationException e) {
-            // Should not happen
-            e.printStackTrace();
+            logger.error("BadLocationException while adding highlights. This should not happen.", e);
         }
     }
 
@@ -750,13 +876,221 @@ public class GitDiffViewer extends JFrame {
         statusBar.setText("Match " + (currentHighlightIndex + 1) + " of " + highlights.size());
     }
 
+    private void exportHtml() {
+        List<CommitInfo> selectedCommits = commitList.getSelectedValuesList();
+        if (selectedCommits.size() != 2) {
+            JOptionPane.showMessageDialog(this, "Please select exactly two commits to export.", "Warning", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        CommitInfo c1 = selectedCommits.get(0);
+        CommitInfo c2 = selectedCommits.get(1);
+
+        long time1 = c1.isUncommitted() ? Long.MAX_VALUE : c1.getCommit().getCommitTime();
+        long time2 = c2.isUncommitted() ? Long.MAX_VALUE : c2.getCommit().getCommitTime();
+
+        CommitInfo first = (time1 < time2) ? c1 : c2;
+        CommitInfo second = (time1 < time2) ? c2 : c1;
+
+        try {
+            String repoPath = repoPathField.getText();
+            String filePath = filePathField.getText();
+            String oldContent = getFileContent(first, repoPath, filePath);
+            String newContent = getFileContent(second, repoPath, filePath);
+
+            JFileChooser fileChooser = new JFileChooser();
+            fileChooser.setDialogTitle("Save HTML Report");
+            fileChooser.setSelectedFile(new File("diff_report.html"));
+            int userSelection = fileChooser.showSaveDialog(this);
+
+            if (userSelection == JFileChooser.APPROVE_OPTION) {
+                File fileToSave = fileChooser.getSelectedFile();
+                if (!fileToSave.getName().toLowerCase().endsWith(".html")) {
+                    fileToSave = new File(fileToSave.getParentFile(), fileToSave.getName() + ".html");
+                }
+                generateHtmlReport(fileToSave, first, second, oldContent, newContent);
+                JOptionPane.showMessageDialog(this, "HTML report saved successfully.", "Success", JOptionPane.INFORMATION_MESSAGE);
+            }
+        } catch (Exception e) {
+            handleException("Error exporting HTML", e);
+        }
+    }
+
+    private void generateHtmlReport(File file, CommitInfo oldCommit, CommitInfo newCommit, String oldText, String newText) throws IOException {
+        StringBuilder html = new StringBuilder();
+        html.append("<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Diff Report</title>");
+        html.append("<style>");
+        html.append("body { font-family: sans-serif; margin: 20px; }");
+        html.append("h2 { margin-bottom: 5px; }");
+        html.append(".meta { margin-bottom: 20px; color: #555; }");
+        html.append("table { width: 100%; border-collapse: collapse; font-family: monospace; font-size: 12px; table-layout: fixed; border: 1px solid #ddd; }");
+        html.append("td { padding: 2px 4px; word-wrap: break-word; white-space: pre-wrap; vertical-align: top; }");
+        html.append(".line-num { width: 40px; text-align: right; color: #999; background-color: #f5f5f5; border-right: 1px solid #ddd; user-select: none; }");
+        html.append(".content { width: 50%; }");
+        html.append(".left-content { border-right: 1px solid #ddd; }");
+        html.append(".add { background-color: #e6ffec; }");
+        html.append(".delete { background-color: #ffebe9; }");
+        html.append(".modified { background-color: #e6e6ff; }");
+        html.append("</style></head><body>");
+
+        html.append("<h2>Diff Report</h2>");
+        html.append("<div class='meta'>");
+        html.append("<div><strong>File:</strong> ").append(escapeHtml(filePathField.getText())).append("</div>");
+        html.append("<div><strong>Left (Old):</strong> ").append(escapeHtml(oldCommit.toString())).append("</div>");
+        html.append("<div><strong>Right (New):</strong> ").append(escapeHtml(newCommit.toString())).append("</div>");
+        html.append("</div>");
+
+        html.append("<table>");
+
+        List<String> oldLines = Arrays.asList(oldText.split("\n"));
+        List<String> newLines = Arrays.asList(newText.split("\n"));
+        List<DiffUtils.Diff> diffs = DiffUtils.diff(oldLines, newLines);
+
+        int leftLineNum = 1;
+        int rightLineNum = 1;
+
+        for (DiffUtils.Diff diff : diffs) {
+            switch (diff.type) {
+                case EQUAL:
+                    for (String line : diff.lines) {
+                        appendHtmlRow(html, leftLineNum++, rightLineNum++, line, line, "");
+                    }
+                    break;
+                case DELETE:
+                    for (String line : diff.lines) {
+                        appendHtmlRow(html, leftLineNum++, null, line, "", "delete");
+                    }
+                    break;
+                case INSERT:
+                    for (String line : diff.lines) {
+                        appendHtmlRow(html, null, rightLineNum++, "", line, "add");
+                    }
+                    break;
+                case CHANGE:
+                    int max = Math.max(diff.oldLines.size(), diff.newLines.size());
+                    for (int i = 0; i < max; i++) {
+                        String oldL = i < diff.oldLines.size() ? diff.oldLines.get(i) : "";
+                        String newL = i < diff.newLines.size() ? diff.newLines.get(i) : "";
+                        Integer lNum = i < diff.oldLines.size() ? leftLineNum++ : null;
+                        Integer rNum = i < diff.newLines.size() ? rightLineNum++ : null;
+                        appendHtmlRow(html, lNum, rNum, oldL, newL, "modified");
+                    }
+                    break;
+            }
+        }
+
+        html.append("</table></body></html>");
+
+        try (PrintWriter out = new PrintWriter(file, "UTF-8")) {
+            out.print(html.toString());
+        }
+    }
+
+    private void appendHtmlRow(StringBuilder html, Integer leftNum, Integer rightNum, String leftContent, String rightContent, String cssClass) {
+        html.append("<tr class='").append(cssClass).append("'>");
+        html.append("<td class='line-num'>").append(leftNum != null ? leftNum : "").append("</td>");
+        html.append("<td class='content left-content'>").append(escapeHtml(leftContent)).append("</td>");
+        html.append("<td class='line-num'>").append(rightNum != null ? rightNum : "").append("</td>");
+        html.append("<td class='content'>").append(escapeHtml(rightContent)).append("</td>");
+        html.append("</tr>");
+    }
+
+    private String escapeHtml(String text) {
+        if (text == null) return "";
+        return text.replace("&", "&amp;")
+                   .replace("<", "&lt;")
+                   .replace(">", "&gt;")
+                   .replace("\"", "&quot;")
+                   .replace("'", "&#39;");
+    }
+
+    private void exportPatch() {
+        List<CommitInfo> selectedCommits = commitList.getSelectedValuesList();
+        if (selectedCommits.size() != 2) {
+            JOptionPane.showMessageDialog(this, "Please select exactly two commits to export.", "Warning", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        CommitInfo c1 = selectedCommits.get(0);
+        CommitInfo c2 = selectedCommits.get(1);
+
+        long time1 = c1.isUncommitted() ? Long.MAX_VALUE : c1.getCommit().getCommitTime();
+        long time2 = c2.isUncommitted() ? Long.MAX_VALUE : c2.getCommit().getCommitTime();
+
+        CommitInfo first = (time1 < time2) ? c1 : c2;
+        CommitInfo second = (time1 < time2) ? c2 : c1;
+
+        try {
+            String patchContent = generatePatch(first, second);
+
+            JFileChooser fileChooser = new JFileChooser();
+            fileChooser.setDialogTitle("Save Patch File");
+            fileChooser.setSelectedFile(new File("changes.patch"));
+            int userSelection = fileChooser.showSaveDialog(this);
+
+            if (userSelection == JFileChooser.APPROVE_OPTION) {
+                File fileToSave = fileChooser.getSelectedFile();
+                if (!fileToSave.getName().toLowerCase().endsWith(".patch") && !fileToSave.getName().toLowerCase().endsWith(".diff")) {
+                    fileToSave = new File(fileToSave.getParentFile(), fileToSave.getName() + ".patch");
+                }
+                try (PrintWriter out = new PrintWriter(fileToSave, "UTF-8")) {
+                    out.print(patchContent);
+                }
+                JOptionPane.showMessageDialog(this, "Patch file saved successfully.", "Success", JOptionPane.INFORMATION_MESSAGE);
+            }
+        } catch (Exception e) {
+            handleException("Error exporting patch", e);
+        }
+    }
+
+    private String generatePatch(CommitInfo oldCommit, CommitInfo newCommit) throws IOException {
+        AbstractTreeIterator oldTree = prepareTreeParser(oldCommit);
+        AbstractTreeIterator newTree = prepareTreeParser(newCommit);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (DiffFormatter formatter = new DiffFormatter(out)) {
+            formatter.setRepository(repository);
+            formatter.setPathFilter(PathFilter.create(filePathField.getText()));
+            formatter.format(oldTree, newTree);
+        }
+        return out.toString("UTF-8");
+    }
+
+    private AbstractTreeIterator prepareTreeParser(CommitInfo info) throws IOException {
+        if (info.isUncommitted()) {
+            return new FileTreeIterator(repository);
+        } else {
+            try (RevWalk walk = new RevWalk(repository)) {
+                RevCommit commit = walk.parseCommit(info.getCommit().getId());
+                CanonicalTreeParser parser = new CanonicalTreeParser();
+                try (ObjectReader reader = repository.newObjectReader()) {
+                    parser.reset(reader, commit.getTree());
+                }
+                return parser;
+            }
+        }
+    }
+
     // --- mainメソッド ---
     public static void main(String[] args) {
+        // デフォルトのログレベルをWARNに設定。--debugフラグがあればDEBUGにする。
+        String logLevel = "WARN";
+        for (String arg : args) {
+            if ("--debug".equalsIgnoreCase(arg) || "--verbose".equalsIgnoreCase(arg)) {
+                logLevel = "DEBUG";
+                break;
+            }
+        }
+        System.setProperty("LOG_LEVEL", logLevel);
+
+        logger = LoggerFactory.getLogger(GitDiffViewer.class);
+        logger.info("Application starting with log level: {}", logLevel);
+
         SwingUtilities.invokeLater(() -> {
             try {
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
             } catch (Exception e) {
-                e.printStackTrace();
+                logger.error("Failed to set System Look and Feel.", e);
             }
             new GitDiffViewer().setVisible(true);
         });
