@@ -30,3 +30,11 @@ target/classes/jp/hatano/gitfilehistory/LineNumberView.class
 target/classes/jp/hatano/gitfilehistory/LineNumberView$1.class
 target/classes/jp/hatano/gitfilehistory/LineNumberView$2.class
 target/classes/jp/hatano/gitfilehistory/LineWrapper.class
+target/classes/jp/hatano/gitfilehistory/GitDiffViewer$3.class
+target/classes/jp/hatano/gitfilehistory/GitDiffViewer$4.class
+target/classes/jp/hatano/gitfilehistory/GitDiffViewer$5.class
+target/classes/jp/hatano/gitfilehistory/GitDiffViewer$6.class
+target/classes/jp/hatano/gitfilehistory/GitDiffViewer$HighlightInfo.class
+.metals/metals.lock.db
+.metals/metals.log
+.metals/metals.mv.db
