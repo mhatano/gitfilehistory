@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 jp.hatano.gitfilehistory
+ *
+ * Licensed under the MIT License. See LICENSE.md in project root for details.
+ */
 package jp.hatano.gitfilehistory;
 
 import org.eclipse.jgit.api.Git;
@@ -285,6 +290,15 @@ public class GitDiffViewer extends JFrame {
         statusBar = new JLabel("Ready");
         statusBar.setBorder(new EmptyBorder(2, 5, 2, 5));
 
+        // --- メニューバー (ヘルプ/About) ---
+        JMenuBar menuBar = new JMenuBar();
+        JMenu helpMenu = new JMenu("Help");
+        JMenuItem aboutItem = new JMenuItem("About");
+        aboutItem.addActionListener(e -> showAboutDialog());
+        helpMenu.add(aboutItem);
+        menuBar.add(helpMenu);
+        setJMenuBar(menuBar);
+
         // --- レイアウトへの追加 ---
         Container contentPane = getContentPane();
         contentPane.setLayout(new BorderLayout());
@@ -344,6 +358,22 @@ public class GitDiffViewer extends JFrame {
         }
         mainSplitPane.setDividerLocation(prefs.getInt(PREF_DIVIDER_LOCATION, 300));
         encodingComboBox.setSelectedItem(prefs.get(PREF_ENCODING, "UTF-8"));
+    }
+
+    /**
+     * Show an about dialog containing copyright and license information.
+     */
+    private void showAboutDialog() {
+        String message = "Git File Diff Viewer\n"
+                + "Copyright (c) 2026 jp.hatano.gitfilehistory\n"
+                + "Licensed under the MIT License\n\n"
+                + "Dependencies and their licenses:\n"
+                + "  - JGit (EPL-1.0)\n"
+                + "  - SLF4J (MIT)\n"
+                + "  - Logback (EPL-1.0 / LGPL2.1)\n"
+                + "  - java-diff-utils (MIT)\n"
+                + "  - JUnit (EPL-1.0)\n";
+        JOptionPane.showMessageDialog(this, message, "About", JOptionPane.INFORMATION_MESSAGE);
     }
 
     private JPanel createSearchPanel() {
