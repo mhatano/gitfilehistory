@@ -38,3 +38,4 @@ target/classes/jp/hatano/gitfilehistory/GitDiffViewer$HighlightInfo.class
 .metals/metals.lock.db
 .metals/metals.log
 .metals/metals.mv.db
+app.log
