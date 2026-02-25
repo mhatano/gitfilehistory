@@ -1,3 +1,12 @@
+# ignore build output and marker files
+# marker files produced by the dependency-maven-plugin should not be checked in
+target/dependency-maven-plugin-markers/*.marker
+
+# generated license files
+target/licenses/*
+
+# build output classes
+
 target/classes/jp/hatano/gitfilehistory/GitDiffViewer.class
 target/classes/jp/hatano/gitfilehistory/GitDiffViewer$CommitCellRenderer.class
 target/classes/jp/hatano/gitfilehistory/GitDiffViewer$CommitInfo.class
