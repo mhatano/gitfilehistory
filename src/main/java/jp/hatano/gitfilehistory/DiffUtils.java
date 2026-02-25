@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 jp.hatano.gitfilehistory
+ * Copyright (c) 2026 Manami Hatano
  *
  * Licensed under the MIT License. See LICENSE.md in project root for details.
  */

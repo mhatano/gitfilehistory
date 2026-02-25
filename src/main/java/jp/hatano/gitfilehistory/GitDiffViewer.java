@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 jp.hatano.gitfilehistory
+ * Copyright (c) 2026 Manami Hatano
  *
  * Licensed under the MIT License. See LICENSE.md in project root for details.
  */
@@ -365,7 +365,7 @@ public class GitDiffViewer extends JFrame {
      */
     private void showAboutDialog() {
         String message = "Git File Diff Viewer\n"
-                + "Copyright (c) 2026 jp.hatano.gitfilehistory\n"
+                + "Copyright (c) 2026 Manami Hatano\n"
                 + "Licensed under the MIT License\n\n"
                 + "Dependencies and their licenses:\n"
                 + "  - JGit (EPL-1.0)\n"
