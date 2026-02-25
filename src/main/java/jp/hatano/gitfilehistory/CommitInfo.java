@@ -56,4 +56,27 @@ public class CommitInfo {
     public String toString() {
         return String.format("%s - %s (%s)", shortHash, message, author);
     }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof CommitInfo)) return false;
+        CommitInfo other = (CommitInfo) o;
+        if (commit != null && other.commit != null) {
+            return commit.getId().equals(other.commit.getId());
+        }
+        // fall back to comparing fields for uncommitted/WIP entries
+        return shortHash.equals(other.shortHash)
+                && author.equals(other.author)
+                && date.equals(other.date)
+                && message.equals(other.message);
+    }
+
+    @Override
+    public int hashCode() {
+        if (commit != null) {
+            return commit.getId().hashCode();
+        }
+        return java.util.Objects.hash(shortHash, author, date, message);
+    }
 }

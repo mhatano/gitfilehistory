@@ -27,6 +27,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.text.*;
 import java.awt.*;
+import java.awt.geom.Rectangle2D;
 import java.awt.event.WindowAdapter;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
@@ -608,6 +609,13 @@ public class GitDiffViewer extends JFrame {
             second = c1;
         }
 
+        // cache hit check – if the same pair of commits is already stored, just redraw
+        if (first.equals(cachedFirstCommit) && second.equals(cachedSecondCommit)) {
+            statusBar.setText("Using cached diff between " + first.getShortHash() + " and " + second.getShortHash());
+            redisplayDiff();
+            return;
+        }
+
         statusBar.setText("Generating diff between " + first.getShortHash() + " and " + second.getShortHash());
 
         try {
@@ -906,8 +914,9 @@ public class GitDiffViewer extends JFrame {
         if (scroll) {
             // その位置にスクロール
             try {
-                Rectangle viewRect = hi.pane.modelToView(hi.start);
-                if (viewRect != null) {
+                Rectangle2D viewRect2D = hi.pane.modelToView2D(hi.start);
+                if (viewRect2D != null) {
+                    Rectangle viewRect = viewRect2D.getBounds();
                     hi.pane.scrollRectToVisible(viewRect);
                 }
                 hi.pane.setCaretPosition(hi.start);
