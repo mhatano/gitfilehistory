@@ -47,3 +47,14 @@ target/classes/jp/hatano/gitfilehistory/GitDiffViewer$HighlightInfo.class
 .metals/metals.lock.db
 .metals/metals.log
 .metals/metals.mv.db
+target/licenses/META-INF/LICENSE.txt
+target/licenses/LICENSE.txt
+target/dependency-maven-plugin-markers/org.slf4j-slf4j-api-jar-2.0.13.marker
+target/dependency-maven-plugin-markers/org.hamcrest-hamcrest-core-jar-1.3.marker
+target/dependency-maven-plugin-markers/org.eclipse.jgit-org.eclipse.jgit-jar-6.9.0.202403050737-r.marker
+target/dependency-maven-plugin-markers/junit-junit-jar-4.11.marker
+target/dependency-maven-plugin-markers/io.github.java-diff-utils-java-diff-utils-jar-4.12.marker
+target/dependency-maven-plugin-markers/commons-codec-commons-codec-jar-1.16.0.marker
+target/dependency-maven-plugin-markers/com.googlecode.javaewah-JavaEWAH-jar-1.2.3.marker
+target/dependency-maven-plugin-markers/ch.qos.logback-logback-core-jar-1.5.3.marker
+target/dependency-maven-plugin-markers/ch.qos.logback-logback-classic-jar-1.5.3.marker
