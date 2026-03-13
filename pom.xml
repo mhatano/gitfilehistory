@@ -34,17 +34,17 @@
 <dependency>
     <groupId>org.eclipse.jgit</groupId>
     <artifactId>org.eclipse.jgit</artifactId>
-    <version>6.9.0.202403050737-r</version> <!-- 最新バージョンを確認してください -->
+    <version>7.5.0.202512021534-r</version> <!-- upgraded to latest available -->
 </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
-      <version>2.0.13</version>
+      <version>2.0.17</version>
     </dependency>
     <dependency>
       <groupId>ch.qos.logback</groupId>
       <artifactId>logback-classic</artifactId>
-      <version>1.5.3</version>
+      <version>1.5.17</version>
     </dependency>
     <dependency>
       <groupId>io.github.java-diff-utils</groupId>

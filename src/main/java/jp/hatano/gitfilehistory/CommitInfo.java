@@ -8,8 +8,8 @@ package jp.hatano.gitfilehistory;
 import org.eclipse.jgit.revwalk.RevCommit;
 
 import java.util.List;
-
-import java.text.SimpleDateFormat;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 
 /**
  * Holds information about a single Git commit.
@@ -26,7 +26,7 @@ public class CommitInfo {
         this.commit = commit;
         this.shortHash = commit.getId().abbreviate(7).name();
         this.author = commit.getAuthorIdent().getName();
-        this.date = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(commit.getAuthorIdent().getWhen());
+        this.date = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault()).format(commit.getAuthorIdent().getWhenAsInstant());
         this.message = commit.getShortMessage();
         this.branchNames = branchNames;
     }
@@ -55,5 +55,28 @@ public class CommitInfo {
     @Override
     public String toString() {
         return String.format("%s - %s (%s)", shortHash, message, author);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof CommitInfo)) return false;
+        CommitInfo other = (CommitInfo) o;
+        if (commit != null && other.commit != null) {
+            return commit.getId().equals(other.commit.getId());
+        }
+        // fall back to comparing fields for uncommitted/WIP entries
+        return shortHash.equals(other.shortHash)
+                && author.equals(other.author)
+                && date.equals(other.date)
+                && message.equals(other.message);
+    }
+
+    @Override
+    public int hashCode() {
+        if (commit != null) {
+            return commit.getId().hashCode();
+        }
+        return java.util.Objects.hash(shortHash, author, date, message);
     }
 }
