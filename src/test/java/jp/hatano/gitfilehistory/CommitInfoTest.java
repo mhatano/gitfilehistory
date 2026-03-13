@@ -5,16 +5,7 @@
  */
 package jp.hatano.gitfilehistory;
 
-import org.eclipse.jgit.lib.PersonIdent;
-import org.eclipse.jgit.revwalk.RevCommit;
 import org.junit.Test;
-import org.mockito.Mockito;
-
-import java.time.Instant;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-
 import static org.junit.Assert.*;
 
 public class CommitInfoTest {

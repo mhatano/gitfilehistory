@@ -5,35 +5,14 @@
  */
 package jp.hatano.gitfilehistory;
 
-import org.eclipse.jgit.api.Git;
-import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.diff.DiffFormatter;
-import org.eclipse.jgit.lib.ObjectReader;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.eclipse.jgit.lib.Ref;
-import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.revwalk.RevTree;
-import org.eclipse.jgit.revwalk.RevWalk;
-import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
-import org.eclipse.jgit.treewalk.AbstractTreeIterator;
-import org.eclipse.jgit.treewalk.CanonicalTreeParser;
-import org.eclipse.jgit.treewalk.FileTreeIterator;
-import org.eclipse.jgit.treewalk.filter.PathFilter;
-import javax.swing.*;
-import javax.swing.border.EmptyBorder;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
-import javax.swing.text.*;
 import java.awt.*;
-import java.awt.geom.Rectangle2D;
-import java.awt.event.WindowAdapter;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
-import java.awt.event.WindowEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.awt.geom.Rectangle2D;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
@@ -45,11 +24,32 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
 import java.util.prefs.Preferences;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
-import java.util.concurrent.ExecutionException;
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import javax.swing.text.*;
+import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectReader;
+import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevTree;
+import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+import org.eclipse.jgit.treewalk.AbstractTreeIterator;
+import org.eclipse.jgit.treewalk.CanonicalTreeParser;
+import org.eclipse.jgit.treewalk.FileTreeIterator;
+import org.eclipse.jgit.treewalk.filter.PathFilter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class GitDiffViewer extends JFrame {
 
@@ -594,20 +594,9 @@ public class GitDiffViewer extends JFrame {
         }
 
         // コミットを時系列順に並べる (古い方が first)
-        CommitInfo c1 = selectedCommits.get(0);
-        CommitInfo c2 = selectedCommits.get(1);
-
-        long time1 = c1.isUncommitted() ? Long.MAX_VALUE : c1.getCommit().getCommitTime();
-        long time2 = c2.isUncommitted() ? Long.MAX_VALUE : c2.getCommit().getCommitTime();
-
-        CommitInfo first, second;
-        if (time1 < time2) {
-            first = c1;
-            second = c2;
-        } else {
-            first = c2;
-            second = c1;
-        }
+        CommitInfo[] sorted = sortCommits(selectedCommits.get(0), selectedCommits.get(1));
+        CommitInfo first = sorted[0];
+        CommitInfo second = sorted[1];
 
         // cache hit check – if the same pair of commits is already stored, just redraw
         if (first.equals(cachedFirstCommit) && second.equals(cachedSecondCommit)) {
@@ -935,14 +924,9 @@ public class GitDiffViewer extends JFrame {
             return;
         }
 
-        CommitInfo c1 = selectedCommits.get(0);
-        CommitInfo c2 = selectedCommits.get(1);
-
-        long time1 = c1.isUncommitted() ? Long.MAX_VALUE : c1.getCommit().getCommitTime();
-        long time2 = c2.isUncommitted() ? Long.MAX_VALUE : c2.getCommit().getCommitTime();
-
-        CommitInfo first = (time1 < time2) ? c1 : c2;
-        CommitInfo second = (time1 < time2) ? c2 : c1;
+        CommitInfo[] sorted = sortCommits(selectedCommits.get(0), selectedCommits.get(1));
+        CommitInfo first = sorted[0];
+        CommitInfo second = sorted[1];
 
         try {
             String repoPath = repoPathField.getText();
@@ -1047,13 +1031,28 @@ public class GitDiffViewer extends JFrame {
         html.append("</tr>");
     }
 
-    private String escapeHtml(String text) {
+    static String escapeHtml(String text) {
         if (text == null) return "";
         return text.replace("&", "&amp;")
                    .replace("<", "&lt;")
                    .replace(">", "&gt;")
                    .replace("\"", "&quot;")
                    .replace("'", "&#39;");
+    }
+
+    /**
+     * Sorts two commits by time, with the older commit first.
+     * Uncommitted changes are considered to be at Long.MAX_VALUE time.
+     */
+    static CommitInfo[] sortCommits(CommitInfo c1, CommitInfo c2) {
+        long time1 = (c1.isUncommitted() || c1.getCommit() == null) ? Long.MAX_VALUE : c1.getCommit().getCommitTime();
+        long time2 = (c2.isUncommitted() || c2.getCommit() == null) ? Long.MAX_VALUE : c2.getCommit().getCommitTime();
+
+        if (time1 <= time2) {
+            return new CommitInfo[] { c1, c2 };
+        } else {
+            return new CommitInfo[] { c2, c1 };
+        }
     }
 
     private void exportPatch() {
@@ -1063,14 +1062,9 @@ public class GitDiffViewer extends JFrame {
             return;
         }
 
-        CommitInfo c1 = selectedCommits.get(0);
-        CommitInfo c2 = selectedCommits.get(1);
-
-        long time1 = c1.isUncommitted() ? Long.MAX_VALUE : c1.getCommit().getCommitTime();
-        long time2 = c2.isUncommitted() ? Long.MAX_VALUE : c2.getCommit().getCommitTime();
-
-        CommitInfo first = (time1 < time2) ? c1 : c2;
-        CommitInfo second = (time1 < time2) ? c2 : c1;
+        CommitInfo[] sorted = sortCommits(selectedCommits.get(0), selectedCommits.get(1));
+        CommitInfo first = sorted[0];
+        CommitInfo second = sorted[1];
 
         try {
             String patchContent = generatePatch(first, second);
